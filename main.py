@@ -1,6 +1,6 @@
 from telethon.sync import TelegramClient
 from telethon import events
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import BaseModel
 import uvicorn
 import os
@@ -35,13 +35,13 @@ class ConfigRequest(BaseModel):
     dest_chat: int
     filters: list[str]  # ["text", "photo", "video", "link"]
 
-clients = {}  # Store active Telegram clients
-configs = {}  # Store forward configs per phone
+clients = {}         # Active Telegram clients
+configs = {}         # Per-phone forward configs
+otp_hashes = {}      # Temp store for phone_code_hash
 
 # =======================
 # TELEGRAM FUNCTIONS
 # =======================
-
 def get_client(phone):
     session_path = os.path.join(SESSION_DIR, phone)
     return TelegramClient(session_path, API_ID, API_HASH)
@@ -54,19 +54,30 @@ def get_client(phone):
 async def login(req: LoginRequest):
     client = get_client(req.phone)
     await client.connect()
+
     if not await client.is_user_authorized():
-        await client.send_code_request(req.phone)
+        sent = await client.send_code_request(req.phone)
+        otp_hashes[req.phone] = sent.phone_code_hash
         return {"status": "code_sent"}
+    
+    clients[req.phone] = client
     return {"status": "already_logged_in"}
 
 @app.post("/verify")
 async def verify(req: CodeRequest):
     client = get_client(req.phone)
     await client.connect()
+
     try:
-        await client.sign_in(req.phone, req.code)
+        code_hash = otp_hashes.get(req.phone)
+        if not code_hash:
+            return {"status": "error", "detail": "phone_code_hash missing"}
+
+        await client.sign_in(req.phone, code_hash, req.code)
         clients[req.phone] = client
+        otp_hashes.pop(req.phone, None)
         return {"status": "logged_in"}
+
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
@@ -89,12 +100,14 @@ async def start_forwarding(req: ConfigRequest):
 
 @app.get("/status/{phone}")
 async def status(phone: str):
-    return {"logged_in": phone in clients, "forwarding": phone in configs}
+    return {
+        "logged_in": phone in clients,
+        "forwarding": phone in configs
+    }
 
 # =======================
-# FILTERING FUNCTION
+# FILTER FUNCTION
 # =======================
-
 def should_forward(msg, filters):
     if "text" in filters and msg.text:
         return True
