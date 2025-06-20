@@ -4,12 +4,14 @@ from fastapi import FastAPI, Request
 from pydantic import BaseModel
 import uvicorn
 import os
+from dotenv import load_dotenv
 
 # =======================
-# CONFIGURATION
+# LOAD ENV VARIABLES
 # =======================
-API_ID = <YOUR_API_ID>  # Replace with your Telegram API ID
-API_HASH = "<YOUR_API_HASH>"  # Replace with your API Hash
+load_dotenv()
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
 
 SESSION_DIR = "sessions"
 if not os.path.exists(SESSION_DIR):
