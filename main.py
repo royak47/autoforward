@@ -56,10 +56,15 @@ async def login(req: LoginRequest):
     await client.connect()
 
     if not await client.is_user_authorized():
+        # Send OTP code
         sent = await client.send_code_request(req.phone)
+
+        # Store the phone_code_hash temporarily
         otp_hashes[req.phone] = sent.phone_code_hash
+
         return {"status": "code_sent"}
-    
+
+    # If already logged in, store the client in memory
     clients[req.phone] = client
     return {"status": "already_logged_in"}
 
