@@ -33,41 +33,41 @@ class ConfigRequest(BaseModel):
     phone: str
     source_chat: int
     dest_chat: int
-    filters: list[str]  # ["text", "photo", "video", "link"]
-
-clients = {}         # Active Telegram clients
-configs = {}         # Per-phone forward configs
-otp_hashes = {}      # Temp store for phone_code_hash
+    filters: list[str]  # Example: ["text", "photo", "video", "link"]
 
 # =======================
-# TELEGRAM FUNCTIONS
+# IN-MEMORY STORAGE
+# =======================
+clients = {}        # Active Telegram clients
+configs = {}        # Per-user forwarding config
+otp_hashes = {}     # Store phone_code_hash temporarily
+
+# =======================
+# TELEGRAM SESSION HELPER
 # =======================
 def get_client(phone):
     session_path = os.path.join(SESSION_DIR, phone)
     return TelegramClient(session_path, API_ID, API_HASH)
 
 # =======================
-# API ENDPOINTS
+# LOGIN ENDPOINT
 # =======================
-
 @app.post("/login")
 async def login(req: LoginRequest):
     client = get_client(req.phone)
     await client.connect()
 
     if not await client.is_user_authorized():
-        # Send OTP code
         sent = await client.send_code_request(req.phone)
-
-        # Store the phone_code_hash temporarily
         otp_hashes[req.phone] = sent.phone_code_hash
-
         return {"status": "code_sent"}
 
-    # If already logged in, store the client in memory
     clients[req.phone] = client
     return {"status": "already_logged_in"}
 
+# =======================
+# VERIFY OTP ENDPOINT
+# =======================
 @app.post("/verify")
 async def verify(req: CodeRequest):
     client = get_client(req.phone)
@@ -78,7 +78,7 @@ async def verify(req: CodeRequest):
         if not code_hash:
             return {"status": "error", "detail": "phone_code_hash missing"}
 
-        await client.sign_in(req.phone, code_hash, req.code)
+        await client.sign_in(phone=req.phone, code=req.code, phone_code_hash=code_hash)
         clients[req.phone] = client
         otp_hashes.pop(req.phone, None)
         return {"status": "logged_in"}
@@ -86,6 +86,9 @@ async def verify(req: CodeRequest):
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
+# =======================
+# START FORWARDING ENDPOINT
+# =======================
 @app.post("/start")
 async def start_forwarding(req: ConfigRequest):
     client = clients.get(req.phone)
@@ -103,6 +106,9 @@ async def start_forwarding(req: ConfigRequest):
     await client.start()
     return {"status": "forwarding_started"}
 
+# =======================
+# STATUS ENDPOINT
+# =======================
 @app.get("/status/{phone}")
 async def status(phone: str):
     return {
@@ -111,7 +117,7 @@ async def status(phone: str):
     }
 
 # =======================
-# FILTER FUNCTION
+# FILTER LOGIC
 # =======================
 def should_forward(msg, filters):
     if "text" in filters and msg.text:
@@ -127,7 +133,7 @@ def should_forward(msg, filters):
     return False
 
 # =======================
-# RUN SERVER
+# RUN SERVER (DEV ONLY)
 # =======================
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
